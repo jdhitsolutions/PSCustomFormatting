@@ -1,0 +1,51 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<Configuration>
+    <ViewDefinitions>
+        <View>
+            <Name>OBJECT.TYPE or name of the view</Name>
+            <ViewSelectedBy>
+                <TypeName>OBJECT.TYPE</TypeName>
+            </ViewSelectedBy>
+            <TableControl>
+                <!-- ################ TABLE DEFINITIONS ################ -->
+                <TableHeaders>
+                    <TableColumnHeader>
+                        <Label>Name</Label>
+                        <Width>7</Width>
+                        <Alignment>right</Alignment>
+                    </TableColumnHeader>
+                </TableHeaders>
+                <TableRowEntries>
+                    <TableRowEntry>
+                        <TableColumnItems>
+                            <TableColumnItem>
+                                <PropertyName>Name</PropertyName>
+                            </TableColumnItem>
+                        </TableColumnItems>
+                    </TableRowEntry>
+                </TableRowEntries>
+            </TableControl>
+        </View>
+        <View>
+            <Name>OBJECT.TYPE or name of the view</Name>
+            <ViewSelectedBy>
+                <TypeName>OBJECT.TYPE</TypeName>
+            </ViewSelectedBy>
+            <ListControl>
+                <!-- ################ LIST DEFINITIONS ################ -->
+                <ListEntries>
+                    <ListEntry>
+                        <EntrySelectedBy>
+                            <TypeName>OBJECT.TYPE</TypeName>
+                        </EntrySelectedBy>
+                        <ListItems>
+                            <ListItem>
+                                <PropertyName>Name</PropertyName>
+                            </ListItem>
+                        </ListItems>
+                    </ListEntry>
+                </ListEntries>
+            </ListControl>
+        </View>
+    </ViewDefinitions>
+</Configuration>

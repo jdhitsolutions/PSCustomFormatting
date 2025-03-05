@@ -1,0 +1,90 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<Configuration>
+  <ViewDefinitions>
+    <View>
+      <Name>default</Name>
+      <ViewSelectedBy>
+        <TypeName>ServerStatus</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <!--Delete the AutoSize node if you want to use the defined widths.-->
+        <AutoSize/>
+        <TableHeaders>
+          <TableColumnHeader>
+            <Label>Computername</Label>
+            <Width>15</Width>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>Uptime</Label>
+            <Width>21</Width>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>%FreeMem</Label>
+            <Width>13</Width>
+            <Alignment>right</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>%FreeC</Label>
+            <Width>11</Width>
+            <Alignment>right</Alignment>
+          </TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem>
+                <PropertyName>Computername</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>
+                <!--strip off milliseconds-->
+                "{0:dd\.hh\:mm\:ss}" -f $_.Uptime</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>
+                  <!--Switch statements don't appear to work properly in script blocks-->
+                if ($_.PctFreeMem -le 30) {
+                    <!--alert-->
+                    <!--Or use $PSStyle-->
+                    $Style = "`e[5;38;5;197m"
+                  }
+                  elseif ($_.PctFree -le 60) {
+                    <!--Warning-->
+                    $Style = "`e[38;5;216m"
+                  }
+                  else {
+                    <!--OK-->
+                    $Style = "`e[38;5;155m"
+                  }
+                   <!--script block output-->
+                  "$Style$($_.PctFreeMem)$($PSStyle.Reset)"
+                </ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>
+                  <!-- Switch statements don't appear to work in this context-->
+                if ($_.PctFreeC -le 15) {
+                  <!--alert-->
+                  <!--Or use $PSStyle-->
+                   $Style = "`e[5;38;5;197m"
+                }
+                elseif ($_.PctFree -le 30) {
+                  <!--Warning-->
+                   $Style = "`e[38;5;228m"
+                }
+                else {
+                  <!--OK-->
+                  $Style = "`e[38;5;155m"
+                }
+                "$Style$($_.PctFreeC)$($PSStyle.Reset)"
+                </ScriptBlock>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+  </ViewDefinitions>
+</Configuration>

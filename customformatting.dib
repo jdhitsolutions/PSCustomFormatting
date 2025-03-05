@@ -1,0 +1,739 @@
+#!meta
+
+{"kernelInfo":{"defaultKernelName":"csharp","items":[{"aliases":[],"name":"csharp"},{"aliases":[],"languageName":"pwsh","name":"pwsh"}]}}
+
+#!markdown
+
+# Say More, Do More with Custom PowerShell Formatting
+
+#!markdown
+
+### Jeff Hicks (https://jdhitsolutions.github.io) 
+
+#!markdown
+
+When creating PowerShell tools that write custom objects to the pipeline, separate the data from how it is presented or formatted. __NEVER__ write a PowerShell function like this:
+
+#!pwsh
+
+Function Get-Foo {
+    [cmdletbinding()]
+    Param()
+    $out = [PSCustomObject]@{
+        Name         = $env:USERNAME
+        ComputerName = $env:COMPUTERNAME
+        Status       = 'Online'
+        ID           = 32345
+        PSVersion    = $PSVersionTable.PSVersion
+    }
+    $out | Format-Table
+}
+
+Get-Foo
+
+#!markdown
+
+All you can do is look at or save it to a text file. *Formatting the output is separate from the data.* __Let the user decide__ how they want to see the data. However, you can define a default format for your custom pipeline output.
+
+#!markdown
+
+### Why Does This Matter
+
+- Create rich object output. 
+- Don't limit yourself in an attempt to make the output look pretty. 
+- Anticipate anything the user may want to know and include it. 
+
+You can make it pretty with custom formatting. Process objects are a good example.
+
+#!pwsh
+
+$p = Get-Process -id $pid
+$p
+
+#!markdown
+
+We get a customized and formatted output, even though the object is rich in properties.
+
+#!pwsh
+
+$p | Select-Object -Property *
+
+#!markdown
+
+Someone at Microsoft decided what an IT Pro would most likely want to see from processes and formatted the output accordingly.
+
+#!markdown
+
+## Creating Custom Formatting
+
+Custom formatting is defined in .ps1xml files. In Windows PowerShell, these are found in `$PSHome`.
+
+#!pwsh
+
+powershell -noprofile -nologo -command '&{Get-ChildItem $PSHome\*.format.ps1xml}'
+
+#!markdown
+
+In PowerShell 7, these files have been moved into compiled code for performance. However, you can define custom formatting in a .ps1xml file and load it into your session.
+
+```xml
+<?xml version="1.0" encoding="utf-8" ?>
+<Configuration>
+    <ViewDefinitions>
+        <View>
+            <Name>OBJECT.TYPE or name of the view</Name>
+            <ViewSelectedBy>
+                <TypeName>OBJECT.TYPE</TypeName>
+            </ViewSelectedBy>
+            <TableControl>
+                <!-- ################ TABLE DEFINITIONS ################ -->
+                <TableHeaders>
+                    <TableColumnHeader>
+                        <Label>Name</Label>
+                        <Width>7</Width>
+                        <Alignment>right</Alignment>
+                    </TableColumnHeader>
+                </TableHeaders>
+                <TableRowEntries>
+                    <TableRowEntry>
+                        <TableColumnItems>
+                            <TableColumnItem>
+                                <PropertyName>Name</PropertyName>
+                            </TableColumnItem>
+                        </TableColumnItems>
+                    </TableRowEntry>
+                </TableRowEntries>
+            </TableControl>
+        </View>
+        <View>
+            <Name>OBJECT.TYPE or name of the view</Name>
+            <ViewSelectedBy>
+                <TypeName>OBJECT.TYPE</TypeName>
+            </ViewSelectedBy>
+            <ListControl>
+                <!-- ################ LIST DEFINITIONS ################ -->
+                <ListEntries>
+                    <ListEntry>
+                        <EntrySelectedBy>
+                            <TypeName>OBJECT.TYPE</TypeName>
+                        </EntrySelectedBy>
+                        <ListItems>
+                            <ListItem>
+                                <PropertyName>Name</PropertyName>
+                            </ListItem>
+                        </ListItems>
+                    </ListEntry>
+                </ListEntries>
+            </ListControl>
+        </View>
+    </ViewDefinitions>
+</Configuration>
+```
+
+You can mix and match format types in the same file. 
+
+#!markdown
+
+### Requirements
+
+Your custom object must have a defined and __unique type__ name. It cannot be a generic PSCustomObject. 
+
+```XML
+<ViewSelectedBy>
+    <TypeName>OBJECT.TYPE</TypeName>
+</ViewSelectedBy>
+```
+
+I typically do this when creating custom objects:
+
+```powershell
+[PSCustomObject]@{
+    PSTypeName   = "PSFoo"  #<--- unique type name
+    Name         = $env:USERNAME
+    ComputerName = $env:COMPUTERNAME
+    Status       = 'Online'
+    ID           = 32345
+    PSVersion    = $PSVersionTable.PSVersion
+}
+```
+
+PowerShell classes are defined with a type name.
+
+```powershell
+class PSFoo {
+    [string]$Name
+    [string]$ComputerName
+    [string]$Status
+    [int]$ID
+    [version]$PSVersion
+}
+```
+
+Or, you can insert a type name into an existing object.
+
+```powershell
+$out.PSObject.TypeNames.Insert(0,"PSFoo")
+```
+
+Let's look at a more practical example.
+
+#!pwsh
+
+Function Get-ServerStatus {
+    [cmdletbinding(DefaultParameterSetName = 'name')]
+    [OutputType('ServerStatus')]
+    [alias("gst")]
+    Param(
+        [Parameter(
+            Position = 0,
+            ValueFromPipeline,
+            ValueFromPipelineByPropertyName,
+            HelpMessage = 'Enter the name of a computer',
+            ParameterSetName = 'name')
+        ]
+        [ValidateNotNullOrEmpty()]
+        [string]$Computername = $env:computername,
+        [Parameter(ParameterSetName = 'name')]
+        [PSCredential]$Credential,
+        [Parameter(ParameterSetName = 'Session', ValueFromPipeline)]
+        [CimSession]$CimSession,
+        [Parameter(HelpMessage = "Format values as [INT]")]
+        [switch]$AsInt
+    )
+
+    Begin {
+        Write-Verbose "[$((Get-Date).TimeOfDay)] Starting $($MyInvocation.MyCommand)"
+    } #begin
+
+    Process {
+        Write-Verbose "[$((Get-Date).TimeOfDay)] Using parameter set $($PSCmdlet.ParameterSetName)"
+
+        $sessParams = @{
+            ErrorAction  = 'stop'
+            computername = $null
+        }
+        $cimParams = @{
+            ErrorAction = 'stop'
+            classname   = $null
+        }
+
+        if ($PSCmdlet.ParameterSetName -eq 'name') {
+            #create a temporary CimSession
+            $sessParams.Computername = $Computername
+            if ($Credential) {
+                $sessParams.Credential = $credential
+            }
+            #if localhost use DCOM - it will be faster to create the session
+            if ($Computername -eq $env:computername) {
+                Write-Verbose "[$((Get-Date).TimeOfDay)] Creating a local session using DCOM"
+                $sessParams.Add("SessionOption", (New-CimSessionOption -Protocol DCOM))
+            }
+            Try {
+                Write-Verbose "[$((Get-Date).TimeOfDay)] $computername"
+                $CimSession = New-CimSession @sessParams
+                $tempSession = $True
+            }
+            catch {
+                Write-Error $_
+                #bail out
+                return
+            }
+        }
+
+        if ($CimSession) {
+            $hash = [ordered]@{
+                PSTypename   = "ServerStatus"
+                Computername = $CimSession.computername.toUpper()
+            }
+            Try {
+                $cimParams.classname = 'Win32_OperatingSystem'
+                $cimParams.CimSession = $CimSession
+                Write-Verbose "[$((Get-Date).TimeOfDay)] Using class $($cimParams.classname)"
+                $OS = Get-CimInstance @cimParams
+                $uptime = (Get-Date) - $OS.lastBootUpTime
+                $hash.Add("Uptime", $uptime)
+
+                $pctFreeMem = [math]::Round(($os.FreePhysicalMemory / $os.TotalVisibleMemorySize) * 100, 2)
+                if ($AsInt) {
+                    $pctFreeMem = $pctFreeMem -as [int]
+                }
+                $hash.Add("PctFreeMem", $pctFreeMem)
+
+                $cimParams.classname = 'Win32_Logicaldisk'
+                $cimParams.filter = "deviceid='C:'"
+
+                Write-Verbose "[$((Get-Date).TimeOfDay)] Using class $($cimParams.classname)"
+                Get-CimInstance @cimParams | ForEach-Object {
+                    $name = "PctFree{0}" -f $_.deviceid.substring(0, 1)
+                    $pctFree = [math]::Round(($_.FreeSpace / $_.size) * 100, 2)
+                    if ($AsInt) {
+                        $pctFree = $pctFree -as [int]
+                    }
+                    $hash.add($name, $pctFree)
+                }
+
+                New-Object PSObject -Property $hash
+            }
+            catch {
+                Write-Error $_
+            }
+
+            #only remove the CimSession if it was created in this function
+            if ($tempSession) {
+                Write-Verbose "[$((Get-Date).TimeOfDay)] Removing temporary CimSession"
+                Remove-CimSession -CimSession $CimSession
+            }
+        } #if CimSession
+    } #process
+
+    End {
+        Write-Verbose "[$((Get-Date).TimeOfDay)] Ending $($MyInvocation.MyCommand)"
+    } #end
+} #close function
+
+Get-Help Get-ServerStatus
+
+#!markdown
+
+The hashtable defines the type name.
+
+```powershell
+ $hash = [ordered]@{
+    PSTypename   = "ServerStatus"
+    Computername = $CimSession.computername.toUpper()
+}
+```
+
+Let's try this without formatting.
+
+#!pwsh
+
+Get-ServerStatus -OutVariable r
+
+#!markdown
+
+:point_right: *PowerShell defaulted to a table because there were five or fewer properties.*
+
+#!pwsh
+
+$r | Get-Member
+
+#!markdown
+
+## Creating Custom Formatting
+
+Manually creating the formatting XML is a pain. I use [New-PSFormatXML](https://github.com/jdhitsolutions/PSScriptTools/blob/master/docs/New-PSFormatXML.md) from the [PSScriptTools module](https://github.com/jdhitsolutions/PSScriptTools). You can create list or table views. All you need is a sample object with values for all the properties you want to include. I'll include all properties.
+
+```powershell
+$r | New-PSFormatXML -path c:\temp\ServerStatus.format.ps1xml -FormatType Table
+code c:\temp\ServerStatus.format.ps1xml
+```
+
+#!markdown
+
+:bulb: *Format files typically follow the naming convention `typename.format.ps1xml`.*
+
+#!markdown
+
+Use the custom format file to *add value* to your output. Here is my modified file.
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This file was created using the New-PSFormatXML command that is part
+of the PSScriptTools module.
+https://github.com/jdhitsolutions/PSScriptTools
+-->
+<Configuration>
+  <ViewDefinitions>
+    <View>
+      <Name>default</Name>
+      <ViewSelectedBy>
+        <TypeName>ServerStatus</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <!--Delete the AutoSize node if you want to use the defined widths.-->
+        <AutoSize />
+        <TableHeaders>
+          <TableColumnHeader>
+            <Label>Computername</Label>
+            <Width>15</Width>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>Uptime</Label>
+            <Width>21</Width>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <!--Customized column header-->
+            <Label>%FreeMem</Label>
+            <Width>13</Width>
+            <!-- Customized alignment -->
+            <Alignment>right</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>PctFreeC</Label>
+            <Width>11</Width>
+            <Alignment>right</Alignment>
+          </TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem>
+                <PropertyName>Computername</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <!--Customized output-->
+                <ScriptBlock>
+                  "{0:dd\.hh\:mm\:ss}" -f $_.Uptime
+                </ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>PctFreeMem</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>PctFreeC</PropertyName>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+  </ViewDefinitions>
+</Configuration>
+```
+
+> :spider: *Watch your casing on `<ScriptBlock>` nodes.*
+
+Use `Update-FormatData` to load the custom format file.
+
+#!pwsh
+
+Update-FormatData .\serverstatus.format.ps1xml
+
+#!markdown
+
+Validate formatting with `Get-FormatData`.
+
+#!pwsh
+
+Get-FormatData -TypeName ServerStatus
+
+#!pwsh
+
+(Get-FormatData -TypeName ServerStatus).FormatViewDefinition
+
+#!pwsh
+
+(Get-FormatData serverstatus).FormatViewDefinition.Control
+
+#!pwsh
+
+(Get-FormatData serverstatus).FormatViewDefinition.Control.Headers
+# Width is ignored because I am using AutoSize - see above
+
+#!pwsh
+
+(Get-FormatData serverstatus).FormatViewDefinition.Control.Rows.Columns
+
+#!markdown
+
+The formatting is immediate and persistent for the duration of my session.
+
+#!pwsh
+
+Get-ServerStatus
+
+#!markdown
+
+The output is easier to read.
+
+- Formatted Uptime time span to strip off milliseconds
+- Custom header `%FreeMem`
+- Aligned values
+
+But why stop there? I can use custom formatting to add value and information.
+
+```xml
+<TableColumnItem>
+  <ScriptBlock>
+  <!--Switch statements don't appear to work properly in script blocks-->
+  if ($_.PctFreeMem -le 30) {
+      <!--alert-->
+      <!--Or use $PSStyle-->
+      $Style = "`e[5;38;5;197m"
+    }
+    elseif ($_.PctFree -le 60) {
+      <!--Warning-->
+      $Style = "`e[38;5;216m"
+    }
+    else {
+      <!--OK-->
+      $Style = "`e[38;5;155m"
+    }
+    <!--script block output-->
+    "$Style$($_.PctFreeMem)$($PSStyle.Reset)"
+  </ScriptBlock>
+</TableColumnItem>
+```
+
+#!markdown
+
+I have defined script blocks to display `%FreeMem` in different colors based on the value.
+
+#!pwsh
+
+# load the updated format file
+Update-FormatData -append .\ServerStatus.Format2.ps1xml
+
+#!markdown
+
+This should overwrite the previous formatting directives.
+
+#!pwsh
+
+Get-ServerStatus
+#this may not format properly in VSCode
+
+#!markdown
+
+Percent Free values is now color-coded based on the value. Low values will blink.
+
+![Get-ServerStatus sample](images/get-serverstatus.png)
+![Get-ServerStatus sample 2](images/get-serverstatus2.png)
+
+#!markdown
+
+## Another Example
+
+Here is a function that writes a larger rich object to the pipeline.
+
+```powershell
+[PSCustomObject]@{
+    PSTypeName       = 'PSServerDetail'
+    Computername     = $os.CSName
+    OperatingSystem  = $os.Caption
+    InstallDate      = $os.InstallDate
+    Memory           = $os.TotalVisibleMemorySize
+    FreeMemory       = $os.FreePhysicalMemory
+    RunningProcesses = $os.NumberOfProcesses - 2  #subtract System and Idle processes
+    RunningServices  = $svc.Count
+    LastBoot         = $os.LastBootUpTime
+    Shares           = $shares
+}
+```
+
+Let's see it. The script file also defines a few type extensions for the object such as alias properties.
+
+#!pwsh
+
+. .\Get-ServerDetail.ps1
+$n = Get-ServerDetail
+$n
+
+#!markdown
+
+I want a default table view. This is a great way to prototype.
+
+#!pwsh
+
+$n | Format-Table -GroupBy ComputerName -Property LastBoot,Uptime,@{Name="MemGB";Expression={$_.Memory/1mb -as [int]}},@{Name="Processes";Expression={$_.RunningProcesses}},@{Name="Services";Expression = {$_.RunningServices}}
+
+#!markdown
+
+I will create my format file. `New-PSFormatXML` will use the expression script blocks in the XML file.
+
+```powershell
+$n | New-PSFormatXML -GroupBy ComputerName -Properties LastBoot,Uptime,
+@{Name="MemGB";Expression={$_.Memory/1mb -as [int]}},
+@{Name="Processes";Expression={$_.RunningProcesses}},
+@{Name="Services";Expression = {$_.RunningServices}} -Path .\PSServerDetail.format.ps1xml
+```
+
+I customized the grouping in the XML file.
+
+```xml
+<GroupBy>
+  <ScriptBlock>
+  <!--Display domain controllers with a different color-->
+    if ($_.Computername -Match "dom") {
+      $fg = "`e[1;38;5;48m"
+    }
+    else {
+      $fg = "`e[1;38;5;147m"
+    }
+    <!--output-->
+    "$fg{0}`e[0m [`e[3m{1}`e[0m]" -f $_.ComputerName,$_.OS.replace("Evaluation","")
+    </ScriptBlock>
+  <Label>Server</Label>
+</GroupBy>
+```
+
+And made other minor adjustments.
+
+#!pwsh
+
+Update-FormatData .\PSServerDetail.format.ps1xml
+$n
+
+#!markdown
+
+Here's an example from my test domain that better displays the custom formatting.
+
+'![Get-ServerDetail Formatting](images/get-serverdetail.png)
+
+I think this is easier to read and more informative than the default table view.
+
+#!markdown
+
+## Custom Views
+
+I have a default table view. I can also create a default list view and add it to the same formatting file.
+
+```powershell
+$n  | New-PSFormatXML -Append -Path .\PSServerDetail.format.ps1xml -FormatType List -properties Computername,OS,Memory,RunningProcesses,RunningServices,LastBoot,Uptime 
+```
+
+The currently loaded format file already has this view.
+
+#!pwsh
+
+$n | Format-List
+
+#!markdown
+
+I can create additional views so that I don't have to run commands like this:
+
+```powershell
+$n | Select Computername,,
+@{Name="MemGB";Expression = {$_.Memory/1mb -as [int]}},
+@{Name="FreeMemGB";Expression= {$_.FreeMemory/1mb -as [int]}},
+@{Name="PctFreeMem";Expression={($_.FreeMemory/$_.Memory)*100}}
+```
+
+Instead, I'll define a custom view.
+
+```powershell
+$n | New-PSFormatXML -Append -Path .\PSServerDetail.format.ps1xml -ViewName memory -FormatType Table -properties Computername,
+@{Name="MemGB";Expression = {$_.Memory/1mb -as [int]}},
+@{Name="FreeMemGB";Expression= {$_.FreeMemory/1mb -as [int]}},
+@{Name="PctFreeMem";Expression={($_.FreeMemory/$_.Memory)*100}}
+```
+
+#!pwsh
+
+code .\PSServerDetail.format.ps1xml
+
+#!pwsh
+
+$n | Format-Table -view memory
+
+#!markdown
+
+> :toolbox: *You could also create custom type extensions or property sets.*
+
+#!markdown
+
+## Modules and Custom Formats
+
+For stand-alone functions I typically insert this code at the end of the script.
+
+```powershell
+Update-FormatData -AppendPath $PSScriptRoot\PSServerDetail.format.ps1xml
+```
+
+For modules, I typically store format files in a subfolder. For example, these are the files for the [PSBluesky module]( https://github.com/jdhitsolutions/PSBluesky)
+
+![Module format files](images/module-format-files.png)
+
+The files are loaded in the module manifest.
+
+```JSON
+FormatsToProcess     = @(
+    'formats\PSBlueSkyTimelinePost.format.ps1xml',
+    'formats\PSBlueskyBlockedUser.format.ps1xml',
+    'formats\PSBlueskyBlockedList.format.ps1xml',
+    'formats\PSBlueskyProfile.format.ps1xml',
+    'formats\PSBlueskyFollower.format.ps1xml',
+    'formats\PSBlueskyFeed.format.ps1xml',
+    'formats\PSBlueskyLiked.format.ps1xml',
+    'formats\PSBlueskySession.format.ps1xml',
+    'formats\PSBlueskyNotification.format.ps1xml',
+    'formats\PSBlueskySearchResult.format.ps1xml',
+    'formats\PSBlueskyModuleInfo.format.ps1xml'
+)
+```
+
+I've done __a lot__ of formatting customization, including true custom formatting.
+
+```XML
+<CustomControl>
+    <CustomEntries>
+        <CustomEntry>
+            <CustomItem>
+                <ExpressionBinding>
+                    <ScriptBlock>
+                    <!--
+                        18 Feb 2025 Added optional code to use pwshSpectreConsole module
+                        to display the user's avatar. This will only work if the module
+                        is installed and the console properly configured.
+                    -->
+                    Try {
+                        $avt = (Get-SpectreImage $_.avatar -MaxWidth 5 -errorAction Stop | Out-SpectreHost).Trim()
+                    }
+                    Catch {
+                        $avt = $Null
+                    }
+                    "{2} {0} [$($bskyPreferences['UserName']){1}$($PSStyle.Reset)]" -f $_.Display.trim(),$($PSStyle.FormatHyperLink($_.UserName,$_.Url)),$avt
+                    </ScriptBlock>
+                </ExpressionBinding>
+...
+```
+
+The Bluesky profile object is rich in properties.
+
+![Bluesky profile properties](images/blueskyprofile-properties.png)
+
+But easier to consume with custom formatting.
+
+![Bluesky profile formatted](images/blueskyprofile-formatted.png)
+
+Formatting includes hyperlinks created with `$PSStyle`.
+
+```powershell
+"{2} {0} [$($bskyPreferences['UserName']){1}$($PSStyle.Reset)]" -f $_.Display.trim(),$($PSStyle.FormatHyperLink($_.UserName,$_.Url)),$avt
+111
+
+#!markdown
+
+## Other Module Examples
+
+- [PSProjectStatus](https://github.com/jdhitsolutions/PSProjectStatus/tree/main/formats)
+
+![Get-PSProjectStatus](images/get-psprojectstatus.png)
+
+- [AD Reporting Tools](https://github.com/jdhitsolutions/ADReportingTools/tree/main/formats)
+
+![Get-ADDomainControllerHealth](images/get-dchealth.png)
+
+- [PSWorkItem](https://github.com/jdhitsolutions/PSWorkItem/tree/main/formats)
+
+![Get-PSWorkItemCategory](images/get-psworkitemcategory.png)
+
+#!markdown
+
+## Behind the PowerShell Pipeline
+
+Knowing how and when to use a feature like custom formatting isn't always obvious or clearly documented. That's why I wrote this.
+
+![Behind the PowerShell Pipeline](images/title_page.png)
+
+Available on [Leanpub](https://leanpub.com/behind-the-pspipeline). The book is drawn from my premium [PowerShell newsletter](https://buttondown.com/behind-the-powershell-pipeline) I started three years ago.
+
+#!markdown
+
+## Questions and Answers
+
+I will share this notebook and the code on GitHub in next few days. Follow me on Bluesky or Mastodon for updates. Go to https://jdhitsolutions.github.io for links.
