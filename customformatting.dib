@@ -607,7 +607,7 @@ $n | Format-List
 I can create additional views so that I don't have to run commands like this:
 
 ```powershell
-$n | Select Computername,,
+$n | Select Computername,
 @{Name="MemGB";Expression = {$_.Memory/1mb -as [int]}},
 @{Name="FreeMemGB";Expression= {$_.FreeMemory/1mb -as [int]}},
 @{Name="PctFreeMem";Expression={($_.FreeMemory/$_.Memory)*100}}
